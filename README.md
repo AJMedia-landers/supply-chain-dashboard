@@ -2,7 +2,12 @@
 
 Next.js (App Router, TypeScript, MUI) app for the supply chain dashboard.
 Auth (login / signup / email-verify / password reset) is wired to the existing
-campaign-creation backend at `NEXT_PUBLIC_API_BASE_URL`.
+campaign-creation backend.
+
+The browser never calls the backend directly. All requests go to the same-origin
+Next.js proxy at `/proxy/*` (`src/app/proxy/[...path]/route.ts`), which forwards
+them server-side to `API_PROXY_TARGET`. This keeps the browser on HTTPS and
+avoids mixed-content blocking when the backend is served over plain HTTP.
 
 ## Setup
 
@@ -10,10 +15,10 @@ campaign-creation backend at `NEXT_PUBLIC_API_BASE_URL`.
 npm install
 ```
 
-`.env` sets the backend base URL:
+`.env` sets the backend base URL (server-side only — not exposed to the browser):
 
 ```
-NEXT_PUBLIC_API_BASE_URL=http://dev.ajmedia.io:8000/api
+API_PROXY_TARGET=http://dev.ajmedia.io:8000/api
 ```
 
 ## Develop

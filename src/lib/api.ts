@@ -1,7 +1,10 @@
 import axios from "axios";
 
+// All requests go to the same-origin Next.js proxy (/proxy/*), which forwards
+// them server-side to the HTTP backend. This keeps the browser on HTTPS and
+// avoids mixed-content blocking. See src/app/proxy/[...path]/route.ts.
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || "/api",
+  baseURL: "/proxy",
 });
 
 api.interceptors.request.use((config) => {
