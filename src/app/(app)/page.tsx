@@ -11,7 +11,6 @@ import {
   InputLabel,
   CircularProgress,
   Alert,
-  Snackbar,
   Table,
   TableBody,
   TableCell,
@@ -20,10 +19,9 @@ import {
   Paper,
   Tooltip,
 } from "@mui/material";
-import SyncIcon from "@mui/icons-material/Sync";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getSkuWeeklyUnits, syncSkuUnits } from "@/lib/analytics.api";
+import { useQuery } from "@tanstack/react-query";
+import { getSkuWeeklyUnits } from "@/lib/analytics.api";
 
 // ymd for `daysAgo` days before today (local).
 function ymdDaysAgo(daysAgo: number): string {
@@ -41,17 +39,12 @@ const RANGE_OPTIONS = [
   { weeks: 52, label: "Last 52 weeks" },
 ];
 
-// Display: blank for zero/empty, negatives in red.
 const NEG = "#c62828";
+const PRODUCT_W = 240;
+const SKU_W = 150;
 
 export default function DashboardPage() {
-  const queryClient = useQueryClient();
   const [weeks, setWeeks] = useState(12);
-  const [snackbar, setSnackbar] = useState<{
-    open: boolean;
-    message: string;
-    severity: "success" | "error";
-  }>({ open: false, message: "", severity: "success" });
 
   const dateFrom = useMemo(() => ymdDaysAgo((weeks - 1) * 7), [weeks]);
   const dateTo = useMemo(() => ymdDaysAgo(0), []);
@@ -61,39 +54,21 @@ export default function DashboardPage() {
     queryFn: () => getSkuWeeklyUnits(dateFrom, dateTo).then((r) => r.data),
   });
 
-  const syncMutation = useMutation({
-    mutationFn: () => syncSkuUnits(),
-    onSuccess: (res) => {
-      setSnackbar({
-        open: true,
-        message: res.data.message || "Data refreshed",
-        severity: "success",
-      });
-      queryClient.invalidateQueries({ queryKey: ["sku-weekly-units"] });
-    },
-    onError: (err: unknown) => {
-      const message =
-        (err as { response?: { data?: { message?: string } }; message?: string })
-          ?.response?.data?.message ||
-        (err as Error)?.message ||
-        "Failed to refresh data";
-      setSnackbar({ open: true, message, severity: "error" });
-    },
-  });
-
   const weekCols = data?.weeks ?? [];
   const skus = data?.skus ?? [];
   const totals = data?.totals ?? {};
+  const colCount = weekCols.length + 3; // Product + SKU + weeks + Total
 
   const handleExport = () => {
     if (!data) return;
     const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
-    const header = ["SKU", "Product", ...weekCols.map((w) => w.label), "Total"];
+    const header = ["Product", "SKU", ...weekCols.map((w) => w.label), "Total"];
     const lines = [header.map(esc).join(",")];
     for (const row of skus) {
+      const hasSku = !row.sku.startsWith("#");
       const cells = [
-        row.sku,
         row.productName ?? "",
+        hasSku ? row.sku : "",
         ...weekCols.map((w) => String(row.units[w.weekStart] ?? "")),
         String(row.total),
       ];
@@ -125,14 +100,23 @@ export default function DashboardPage() {
     );
   };
 
-  const stickyCol = {
+  const productCol = {
     position: "sticky" as const,
     left: 0,
     zIndex: 2,
     bgcolor: "background.paper",
+    minWidth: PRODUCT_W,
+    width: PRODUCT_W,
+  };
+  const skuCol = {
+    position: "sticky" as const,
+    left: PRODUCT_W,
+    zIndex: 2,
+    bgcolor: "background.paper",
+    minWidth: SKU_W,
+    width: SKU_W,
     borderRight: 1,
     borderColor: "divider",
-    minWidth: 200,
   };
 
   return (
@@ -177,20 +161,6 @@ export default function DashboardPage() {
           >
             Export CSV
           </Button>
-          <Button
-            variant="contained"
-            startIcon={
-              syncMutation.isPending ? (
-                <CircularProgress size={18} color="inherit" />
-              ) : (
-                <SyncIcon />
-              )
-            }
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-          >
-            {syncMutation.isPending ? "Refreshing..." : "Refresh data"}
-          </Button>
         </Stack>
       </Stack>
 
@@ -201,12 +171,17 @@ export default function DashboardPage() {
       )}
 
       <Paper variant="outlined" sx={{ overflowX: "auto" }}>
-        <Table size="small" stickyHeader sx={{ minWidth: 640 }}>
+        <Table size="small" stickyHeader sx={{ minWidth: 720 }}>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ ...stickyCol, zIndex: 3, fontWeight: 700 }}>SKU</TableCell>
+              <TableCell sx={{ ...productCol, zIndex: 3, fontWeight: 700 }}>Product</TableCell>
+              <TableCell sx={{ ...skuCol, zIndex: 3, fontWeight: 700 }}>SKU</TableCell>
               {weekCols.map((w) => (
-                <TableCell key={w.weekStart} align="right" sx={{ fontWeight: 700, whiteSpace: "nowrap" }}>
+                <TableCell
+                  key={w.weekStart}
+                  align="right"
+                  sx={{ fontWeight: 700, whiteSpace: "nowrap" }}
+                >
                   {w.label}
                 </TableCell>
               ))}
@@ -218,7 +193,7 @@ export default function DashboardPage() {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={weekCols.length + 2} align="center" sx={{ py: 4 }}>
+                <TableCell colSpan={colCount} align="center" sx={{ py: 4 }}>
                   <CircularProgress size={24} />
                 </TableCell>
               </TableRow>
@@ -226,47 +201,45 @@ export default function DashboardPage() {
 
             {!isLoading && skus.length === 0 && (
               <TableRow>
-                <TableCell colSpan={weekCols.length + 2} align="center" sx={{ py: 4 }}>
+                <TableCell colSpan={colCount} align="center" sx={{ py: 4 }}>
                   <Typography color="text.secondary">
-                    No units yet. Click “Refresh data” to pull recent orders.
+                    No units yet for this range.
                   </Typography>
                 </TableCell>
               </TableRow>
             )}
 
             {skus.map((row) => {
-              const noSku = row.sku.startsWith("#");
+              const hasSku = !row.sku.startsWith("#");
+              const productName = row.productName || (hasSku ? row.sku : row.sku);
               return (
                 <TableRow key={row.sku} hover>
-                  <TableCell sx={stickyCol}>
-                    <Tooltip title={row.productName ?? ""} placement="right">
-                      <Box>
-                        <Typography variant="body2" fontWeight={600}>
-                          {noSku ? row.productName || row.sku : row.sku}
-                        </Typography>
-                        {noSku ? (
-                          <Typography variant="caption" color="text.secondary">
-                            no SKU
-                          </Typography>
-                        ) : (
-                          row.productName && (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{
-                                display: "block",
-                                maxWidth: 240,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {row.productName}
-                            </Typography>
-                          )
-                        )}
-                      </Box>
+                  <TableCell sx={productCol}>
+                    <Tooltip title={productName} placement="right">
+                      <Typography
+                        variant="body2"
+                        fontWeight={600}
+                        sx={{
+                          maxWidth: PRODUCT_W - 24,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {productName}
+                      </Typography>
                     </Tooltip>
+                  </TableCell>
+                  <TableCell sx={skuCol}>
+                    {hasSku ? (
+                      <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                        {row.sku}
+                      </Typography>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">
+                        no SKU
+                      </Typography>
+                    )}
                   </TableCell>
                   {weekCols.map((w) => (
                     <TableCell key={w.weekStart} align="right">
@@ -280,7 +253,21 @@ export default function DashboardPage() {
 
             {!isLoading && skus.length > 0 && (
               <TableRow>
-                <TableCell sx={{ ...stickyCol, fontWeight: 700 }}>Total</TableCell>
+                <TableCell
+                  colSpan={2}
+                  sx={{
+                    position: "sticky",
+                    left: 0,
+                    zIndex: 2,
+                    bgcolor: "background.paper",
+                    minWidth: PRODUCT_W + SKU_W,
+                    borderRight: 1,
+                    borderColor: "divider",
+                    fontWeight: 700,
+                  }}
+                >
+                  Total
+                </TableCell>
                 {weekCols.map((w) => (
                   <TableCell key={w.weekStart} align="right">
                     {cell(totals[w.weekStart], true)}
@@ -297,21 +284,6 @@ export default function DashboardPage() {
           </TableBody>
         </Table>
       </Paper>
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={5000}
-        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert
-          severity={snackbar.severity}
-          variant="filled"
-          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
     </Box>
   );
 }
