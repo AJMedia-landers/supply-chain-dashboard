@@ -18,8 +18,10 @@ import {
   TableRow,
   Paper,
   Tooltip,
+  Avatar,
 } from "@mui/material";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
+import ImageIcon from "@mui/icons-material/Image";
 import { useQuery } from "@tanstack/react-query";
 import { getSkuWeeklyUnits } from "@/lib/analytics.api";
 
@@ -40,7 +42,7 @@ const RANGE_OPTIONS = [
 ];
 
 const NEG = "#c62828";
-const PRODUCT_W = 240;
+const PRODUCT_W = 280;
 const SKU_W = 150;
 
 export default function DashboardPage() {
@@ -171,7 +173,28 @@ export default function DashboardPage() {
       )}
 
       <Paper variant="outlined" sx={{ overflowX: "auto" }}>
-        <Table size="small" stickyHeader sx={{ minWidth: 720 }}>
+        <Table
+          size="small"
+          stickyHeader
+          sx={{
+            minWidth: 720,
+            // Opaque header (covers rows on vertical scroll) with a clear underline.
+            "& thead th": {
+              backgroundColor: "background.paper",
+              borderBottom: "2px solid",
+              borderColor: "divider",
+            },
+            // Hover shades the whole row, including the sticky Product/SKU cells.
+            "& tbody tr:not(:last-child):hover td": {
+              backgroundColor: "action.hover",
+            },
+            // Totals row separated by a top rule.
+            "& tbody tr:last-child td": {
+              borderTop: "2px solid",
+              borderColor: "divider",
+            },
+          }}
+        >
           <TableHead>
             <TableRow>
               <TableCell sx={{ ...productCol, zIndex: 3, fontWeight: 700 }}>Product</TableCell>
@@ -213,22 +236,32 @@ export default function DashboardPage() {
               const hasSku = !row.sku.startsWith("#");
               const productName = row.productName || (hasSku ? row.sku : row.sku);
               return (
-                <TableRow key={row.sku} hover>
+                <TableRow key={row.sku}>
                   <TableCell sx={productCol}>
-                    <Tooltip title={productName} placement="right">
-                      <Typography
-                        variant="body2"
-                        fontWeight={600}
-                        sx={{
-                          maxWidth: PRODUCT_W - 24,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                      <Avatar
+                        variant="rounded"
+                        src={row.productImage || undefined}
+                        alt={productName}
+                        sx={{ width: 36, height: 36, bgcolor: "action.hover", flexShrink: 0 }}
                       >
-                        {productName}
-                      </Typography>
-                    </Tooltip>
+                        <ImageIcon fontSize="small" sx={{ color: "text.disabled" }} />
+                      </Avatar>
+                      <Tooltip title={productName} placement="right">
+                        <Typography
+                          variant="body2"
+                          fontWeight={600}
+                          sx={{
+                            maxWidth: PRODUCT_W - 64,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {productName}
+                        </Typography>
+                      </Tooltip>
+                    </Stack>
                   </TableCell>
                   <TableCell sx={skuCol}>
                     {hasSku ? (
