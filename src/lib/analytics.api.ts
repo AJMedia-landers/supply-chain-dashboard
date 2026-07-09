@@ -29,16 +29,3 @@ export const getSkuWeeklyUnits = (dateFrom?: string, dateTo?: string) => {
     { params }
   );
 };
-
-export interface SyncSkuUnitsResponse {
-  success: boolean;
-  message: string;
-  ordersScanned: number;
-  ordersUpserted: number;
-  rowsWritten: number;
-  windowStart: string;
-  windowEnd: string;
-}
-
-export const syncSkuUnits = () =>
-  api.post<SyncSkuUnitsResponse>("/checkout-campaign/analytics/sync-sku-units");
