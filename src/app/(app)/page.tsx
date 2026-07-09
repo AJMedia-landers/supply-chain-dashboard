@@ -178,6 +178,14 @@ export default function DashboardPage() {
           stickyHeader
           sx={{
             minWidth: 720,
+            // Vertical column dividers on every cell (MUI draws none by default).
+            "& th, & td": {
+              borderRight: "1px solid",
+              borderColor: "divider",
+            },
+            "& th:last-of-type, & td:last-of-type": {
+              borderRight: 0,
+            },
             // Opaque header (covers rows on vertical scroll) with a clear underline.
             "& thead th": {
               backgroundColor: "background.paper",
