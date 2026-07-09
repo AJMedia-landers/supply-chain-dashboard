@@ -19,11 +19,15 @@ import {
   Paper,
   Tooltip,
   Avatar,
+  TextField,
+  TableSortLabel,
+  InputAdornment,
 } from "@mui/material";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import ImageIcon from "@mui/icons-material/Image";
+import SearchIcon from "@mui/icons-material/Search";
 import { useQuery } from "@tanstack/react-query";
-import { getSkuWeeklyUnits } from "@/lib/analytics.api";
+import { getSkuWeeklyUnits, type WeeklySkuRow } from "@/lib/analytics.api";
 
 // ymd for `daysAgo` days before today (local).
 function ymdDaysAgo(daysAgo: number): string {
@@ -58,19 +62,74 @@ export default function DashboardPage() {
 
   const weekCols = data?.weeks ?? [];
   const skus = data?.skus ?? [];
-  const totals = data?.totals ?? {};
   const colCount = weekCols.length + 3; // Product + SKU + weeks + Total
+
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<string>("total");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const handleSort = (key: string, numeric: boolean) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(numeric ? "desc" : "asc");
+    }
+  };
+
+  // Search filter + sort (client-side over the returned rows).
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? skus.filter(
+          (r) =>
+            (r.productName ?? "").toLowerCase().includes(q) ||
+            r.sku.toLowerCase().includes(q)
+        )
+      : skus;
+
+    const dir = sortDir === "asc" ? 1 : -1;
+    const valOf = (r: WeeklySkuRow): string | number => {
+      if (sortKey === "product") return (r.productName ?? "").toLowerCase();
+      if (sortKey === "sku") return r.sku.toLowerCase();
+      if (sortKey === "total") return r.total;
+      return r.units[sortKey] ?? 0; // a week column
+    };
+
+    return [...filtered].sort((a, b) => {
+      const va = valOf(a);
+      const vb = valOf(b);
+      if (typeof va === "string" && typeof vb === "string") {
+        return va.localeCompare(vb) * dir;
+      }
+      return ((va as number) - (vb as number)) * dir;
+    });
+  }, [skus, search, sortKey, sortDir]);
+
+  // Totals reflect the currently shown (filtered) rows.
+  const weekTotals = useMemo(() => {
+    const t: Record<string, number> = {};
+    for (const w of weekCols) t[w.weekStart] = 0;
+    for (const r of rows) {
+      for (const w of weekCols) t[w.weekStart] += r.units[w.weekStart] ?? 0;
+    }
+    return t;
+  }, [rows, weekCols]);
+
+  const grandTotal = useMemo(
+    () => Object.values(weekTotals).reduce((a, b) => a + b, 0),
+    [weekTotals]
+  );
 
   const handleExport = () => {
     if (!data) return;
     const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
     const header = ["Product", "SKU", ...weekCols.map((w) => w.label), "Total"];
     const lines = [header.map(esc).join(",")];
-    for (const row of skus) {
-      const hasSku = !row.sku.startsWith("#");
+    for (const row of rows) {
       const cells = [
         row.productName ?? "",
-        hasSku ? row.sku : "",
+        row.sku,
         ...weekCols.map((w) => String(row.units[w.weekStart] ?? "")),
         String(row.total),
       ];
@@ -79,8 +138,8 @@ export default function DashboardPage() {
     const totalCells = [
       "TOTAL",
       "",
-      ...weekCols.map((w) => String(totals[w.weekStart] ?? "")),
-      String(Object.values(totals).reduce((a, b) => a + b, 0)),
+      ...weekCols.map((w) => String(weekTotals[w.weekStart] ?? "")),
+      String(grandTotal),
     ];
     lines.push(totalCells.map(esc).join(","));
 
@@ -140,6 +199,20 @@ export default function DashboardPage() {
           </Typography>
         </Box>
         <Stack direction="row" spacing={2} alignItems="center">
+          <TextField
+            size="small"
+            placeholder="Search product or SKU"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" />
+                </InputAdornment>
+              ),
+            }}
+            sx={{ minWidth: 240 }}
+          />
           <FormControl size="small" sx={{ minWidth: 160 }}>
             <InputLabel id="range-label">Range</InputLabel>
             <Select
@@ -205,19 +278,47 @@ export default function DashboardPage() {
         >
           <TableHead>
             <TableRow>
-              <TableCell sx={{ ...productCol, zIndex: 3, fontWeight: 700 }}>Product</TableCell>
-              <TableCell sx={{ ...skuCol, zIndex: 3, fontWeight: 700 }}>SKU</TableCell>
+              <TableCell sx={{ ...productCol, zIndex: 3, fontWeight: 700 }}>
+                <TableSortLabel
+                  active={sortKey === "product"}
+                  direction={sortKey === "product" ? sortDir : "asc"}
+                  onClick={() => handleSort("product", false)}
+                >
+                  Product
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ ...skuCol, zIndex: 3, fontWeight: 700 }}>
+                <TableSortLabel
+                  active={sortKey === "sku"}
+                  direction={sortKey === "sku" ? sortDir : "asc"}
+                  onClick={() => handleSort("sku", false)}
+                >
+                  SKU
+                </TableSortLabel>
+              </TableCell>
               {weekCols.map((w) => (
                 <TableCell
                   key={w.weekStart}
                   align="right"
                   sx={{ fontWeight: 700, whiteSpace: "nowrap" }}
                 >
-                  {w.label}
+                  <TableSortLabel
+                    active={sortKey === w.weekStart}
+                    direction={sortKey === w.weekStart ? sortDir : "desc"}
+                    onClick={() => handleSort(w.weekStart, true)}
+                  >
+                    {w.label}
+                  </TableSortLabel>
                 </TableCell>
               ))}
               <TableCell align="right" sx={{ fontWeight: 700 }}>
-                Total
+                <TableSortLabel
+                  active={sortKey === "total"}
+                  direction={sortKey === "total" ? sortDir : "desc"}
+                  onClick={() => handleSort("total", true)}
+                >
+                  Total
+                </TableSortLabel>
               </TableCell>
             </TableRow>
           </TableHead>
@@ -230,17 +331,19 @@ export default function DashboardPage() {
               </TableRow>
             )}
 
-            {!isLoading && skus.length === 0 && (
+            {!isLoading && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={colCount} align="center" sx={{ py: 4 }}>
                   <Typography color="text.secondary">
-                    No units yet for this range.
+                    {search
+                      ? "No products match your search."
+                      : "No units yet for this range."}
                   </Typography>
                 </TableCell>
               </TableRow>
             )}
 
-            {skus.map((row) => {
+            {rows.map((row) => {
               const hasSku = !row.sku.startsWith("#");
               const productName = row.productName || (hasSku ? row.sku : row.sku);
               return (
@@ -292,7 +395,7 @@ export default function DashboardPage() {
               );
             })}
 
-            {!isLoading && skus.length > 0 && (
+            {!isLoading && rows.length > 0 && (
               <TableRow>
                 <TableCell
                   colSpan={2}
@@ -311,15 +414,10 @@ export default function DashboardPage() {
                 </TableCell>
                 {weekCols.map((w) => (
                   <TableCell key={w.weekStart} align="right">
-                    {cell(totals[w.weekStart], true)}
+                    {cell(weekTotals[w.weekStart], true)}
                   </TableCell>
                 ))}
-                <TableCell align="right">
-                  {cell(
-                    Object.values(totals).reduce((a, b) => a + b, 0),
-                    true
-                  )}
-                </TableCell>
+                <TableCell align="right">{cell(grandTotal, true)}</TableCell>
               </TableRow>
             )}
           </TableBody>
