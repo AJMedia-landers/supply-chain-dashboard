@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Typography,
@@ -22,6 +22,7 @@ import {
   TextField,
   TableSortLabel,
   InputAdornment,
+  TablePagination,
 } from "@mui/material";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import ImageIcon from "@mui/icons-material/Image";
@@ -119,6 +120,20 @@ export default function DashboardPage() {
   const grandTotal = useMemo(
     () => Object.values(weekTotals).reduce((a, b) => a + b, 0),
     [weekTotals]
+  );
+
+  // Pagination (client-side over the filtered/sorted rows).
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
+
+  // Reset to the first page whenever the result set changes.
+  useEffect(() => {
+    setPage(0);
+  }, [search, sortKey, sortDir, weeks]);
+
+  const pageRows = useMemo(
+    () => rows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+    [rows, page, rowsPerPage]
   );
 
   const handleExport = () => {
@@ -343,7 +358,7 @@ export default function DashboardPage() {
               </TableRow>
             )}
 
-            {rows.map((row) => {
+            {pageRows.map((row) => {
               const hasSku = !row.sku.startsWith("#");
               const productName = row.productName || (hasSku ? row.sku : row.sku);
               return (
@@ -423,6 +438,19 @@ export default function DashboardPage() {
           </TableBody>
         </Table>
       </Paper>
+
+      <TablePagination
+        component="div"
+        count={rows.length}
+        page={page}
+        onPageChange={(_, p) => setPage(p)}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={(e) => {
+          setRowsPerPage(parseInt(e.target.value, 10));
+          setPage(0);
+        }}
+        rowsPerPageOptions={[10, 25, 50, 100]}
+      />
     </Box>
   );
 }
