@@ -23,12 +23,17 @@ import {
   TableSortLabel,
   InputAdornment,
   TablePagination,
+  Snackbar,
 } from "@mui/material";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import ImageIcon from "@mui/icons-material/Image";
 import SearchIcon from "@mui/icons-material/Search";
-import { useQuery } from "@tanstack/react-query";
-import { getSkuWeeklyUnits, type WeeklySkuRow } from "@/lib/analytics.api";
+import SyncIcon from "@mui/icons-material/Sync";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { getSkuWeeklyUnits, syncSkuUnits, type WeeklySkuRow } from "@/lib/analytics.api";
+import { useAuth } from "@/context/AuthContext";
+
+const SYNC_EMAIL = "ivan.plametiuk@ajmedia.io";
 
 // ymd for `daysAgo` days before today (local).
 function ymdDaysAgo(daysAgo: number): string {
@@ -51,7 +56,20 @@ const PRODUCT_W = 280;
 const SKU_W = 150;
 
 export default function DashboardPage() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const canSync = user?.email === SYNC_EMAIL;
+
   const [weeks, setWeeks] = useState(12);
+
+  // Manual sync (restricted to SYNC_EMAIL) — pick an explicit date range.
+  const [syncFrom, setSyncFrom] = useState(ymdDaysAgo(2));
+  const [syncTo, setSyncTo] = useState(ymdDaysAgo(0));
+  const [snackbar, setSnackbar] = useState<{
+    open: boolean;
+    message: string;
+    severity: "success" | "error";
+  }>({ open: false, message: "", severity: "success" });
 
   const dateFrom = useMemo(() => ymdDaysAgo((weeks - 1) * 7), [weeks]);
   const dateTo = useMemo(() => ymdDaysAgo(0), []);
@@ -135,6 +153,26 @@ export default function DashboardPage() {
     () => rows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
     [rows, page, rowsPerPage]
   );
+
+  const syncMutation = useMutation({
+    mutationFn: () => syncSkuUnits(syncFrom, syncTo),
+    onSuccess: (res) => {
+      setSnackbar({
+        open: true,
+        message: res.data.message || "Sync complete",
+        severity: "success",
+      });
+      queryClient.invalidateQueries({ queryKey: ["sku-weekly-units"] });
+    },
+    onError: (err: unknown) => {
+      const message =
+        (err as { response?: { data?: { message?: string } }; message?: string })
+          ?.response?.data?.message ||
+        (err as Error)?.message ||
+        "Sync failed";
+      setSnackbar({ open: true, message, severity: "error" });
+    },
+  });
 
   const handleExport = () => {
     if (!data) return;
@@ -253,6 +291,51 @@ export default function DashboardPage() {
           </Button>
         </Stack>
       </Stack>
+
+      {canSync && (
+        <Stack
+          direction="row"
+          spacing={2}
+          alignItems="center"
+          mb={2}
+          flexWrap="wrap"
+          useFlexGap
+        >
+          <Typography variant="body2" color="text.secondary">
+            Manual sync:
+          </Typography>
+          <TextField
+            size="small"
+            type="date"
+            label="From"
+            InputLabelProps={{ shrink: true }}
+            value={syncFrom}
+            onChange={(e) => setSyncFrom(e.target.value)}
+          />
+          <TextField
+            size="small"
+            type="date"
+            label="To"
+            InputLabelProps={{ shrink: true }}
+            value={syncTo}
+            onChange={(e) => setSyncTo(e.target.value)}
+          />
+          <Button
+            variant="contained"
+            startIcon={
+              syncMutation.isPending ? (
+                <CircularProgress size={18} color="inherit" />
+              ) : (
+                <SyncIcon />
+              )
+            }
+            onClick={() => syncMutation.mutate()}
+            disabled={syncMutation.isPending || !syncFrom || !syncTo}
+          >
+            {syncMutation.isPending ? "Syncing..." : "Sync"}
+          </Button>
+        </Stack>
+      )}
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -451,6 +534,21 @@ export default function DashboardPage() {
         }}
         rowsPerPageOptions={[10, 25, 50, 100]}
       />
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          severity={snackbar.severity}
+          variant="filled"
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
