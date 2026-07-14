@@ -9,6 +9,7 @@ export interface WeeklySkuRow {
   sku: string;
   productName: string | null;
   productImage: string | null;
+  storeName: string | null;
   units: Record<string, number>; // weekStart -> net units
   total: number;
 }

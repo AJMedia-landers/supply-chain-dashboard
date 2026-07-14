@@ -30,7 +30,7 @@ import ImageIcon from "@mui/icons-material/Image";
 import SearchIcon from "@mui/icons-material/Search";
 import SyncIcon from "@mui/icons-material/Sync";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getSkuWeeklyUnits, syncSkuUnits, type WeeklySkuRow } from "@/lib/analytics.api";
+import { getSkuWeeklyUnits, syncSkuUnits } from "@/lib/analytics.api";
 import { useAuth } from "@/context/AuthContext";
 
 const SYNC_EMAIL = "ivan.plametiuk@ajmedia.io";
@@ -54,6 +54,21 @@ const RANGE_OPTIONS = [
 const NEG = "#c62828";
 const PRODUCT_W = 280;
 const SKU_W = 150;
+
+type GroupMode = "sku" | "store" | "product";
+
+type DisplayRow = {
+  key: string;
+  label: string;
+  sub: string | null;
+  image: string | null;
+  units: Record<string, number>;
+  total: number;
+};
+
+// Base product identity: strip a trailing variant token (e.g. "-1x", "-blue", "_x2").
+const baseSku = (sku: string) => sku.replace(/[-_][^-_]+$/, "") || sku;
+const baseName = (name: string) => name.replace(/\s*[-–]\s*[^-–]+$/, "").trim() || name;
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -83,6 +98,7 @@ export default function DashboardPage() {
   const skus = data?.skus ?? [];
   const colCount = weekCols.length + 3; // Product + SKU + weeks + Total
 
+  const [groupMode, setGroupMode] = useState<GroupMode>("sku");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<string>("total");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -96,21 +112,64 @@ export default function DashboardPage() {
     }
   };
 
-  // Search filter + sort (client-side over the returned rows).
+  // Collapse the per-SKU rows into the chosen grouping (SKU / Store / Product).
+  const displayRows = useMemo<DisplayRow[]>(() => {
+    if (groupMode === "sku") {
+      return skus.map((r) => ({
+        key: r.sku,
+        label: r.productName || r.sku,
+        sub: r.sku.startsWith("#") ? null : r.sku,
+        image: r.productImage,
+        units: r.units,
+        total: r.total,
+      }));
+    }
+
+    const groups = new Map<
+      string,
+      { key: string; label: string; image: string | null; units: Record<string, number>; total: number; count: number }
+    >();
+    for (const r of skus) {
+      const key = groupMode === "store" ? r.storeName || "Unmapped" : baseSku(r.sku);
+      const label =
+        groupMode === "store" ? r.storeName || "Unmapped" : baseName(r.productName || r.sku);
+      const image = groupMode === "store" ? null : r.productImage;
+      let g = groups.get(key);
+      if (!g) {
+        g = { key, label, image, units: {}, total: 0, count: 0 };
+        groups.set(key, g);
+      }
+      for (const [wk, v] of Object.entries(r.units)) g.units[wk] = (g.units[wk] || 0) + v;
+      g.total += r.total;
+      g.count += 1;
+      if (!g.image && image) g.image = image;
+    }
+    const unit = groupMode === "store" ? "SKUs" : "variants";
+    return [...groups.values()].map((g) => ({
+      key: g.key,
+      label: g.label,
+      sub: `${g.count} ${unit}`,
+      image: g.image,
+      units: g.units,
+      total: g.total,
+    }));
+  }, [skus, groupMode]);
+
+  // Search filter + sort over the display rows.
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = q
-      ? skus.filter(
+      ? displayRows.filter(
           (r) =>
-            (r.productName ?? "").toLowerCase().includes(q) ||
-            r.sku.toLowerCase().includes(q)
+            r.label.toLowerCase().includes(q) ||
+            (r.sub ?? "").toLowerCase().includes(q)
         )
-      : skus;
+      : displayRows;
 
     const dir = sortDir === "asc" ? 1 : -1;
-    const valOf = (r: WeeklySkuRow): string | number => {
-      if (sortKey === "product") return (r.productName ?? "").toLowerCase();
-      if (sortKey === "sku") return r.sku.toLowerCase();
+    const valOf = (r: DisplayRow): string | number => {
+      if (sortKey === "product") return r.label.toLowerCase();
+      if (sortKey === "sku") return (r.sub ?? "").toLowerCase();
       if (sortKey === "total") return r.total;
       return r.units[sortKey] ?? 0; // a week column
     };
@@ -123,7 +182,7 @@ export default function DashboardPage() {
       }
       return ((va as number) - (vb as number)) * dir;
     });
-  }, [skus, search, sortKey, sortDir]);
+  }, [displayRows, search, sortKey, sortDir]);
 
   // Totals reflect the currently shown (filtered) rows.
   const weekTotals = useMemo(() => {
@@ -140,6 +199,10 @@ export default function DashboardPage() {
     [weekTotals]
   );
 
+  const firstColLabel = groupMode === "store" ? "Store" : "Product";
+  const secondColLabel =
+    groupMode === "sku" ? "SKU" : groupMode === "store" ? "SKUs" : "Variants";
+
   // Pagination (client-side over the filtered/sorted rows).
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(500);
@@ -147,7 +210,7 @@ export default function DashboardPage() {
   // Reset to the first page whenever the result set changes.
   useEffect(() => {
     setPage(0);
-  }, [search, sortKey, sortDir, weeks]);
+  }, [search, sortKey, sortDir, weeks, groupMode]);
 
   const pageRows = useMemo(
     () => rows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
@@ -177,12 +240,12 @@ export default function DashboardPage() {
   const handleExport = () => {
     if (!data) return;
     const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
-    const header = ["Product", "SKU", ...weekCols.map((w) => w.label), "Total"];
+    const header = [firstColLabel, secondColLabel, ...weekCols.map((w) => w.label), "Total"];
     const lines = [header.map(esc).join(",")];
     for (const row of rows) {
       const cells = [
-        row.productName ?? "",
-        row.sku,
+        row.label,
+        row.sub ?? "",
         ...weekCols.map((w) => String(row.units[w.weekStart] ?? "")),
         String(row.total),
       ];
@@ -266,6 +329,19 @@ export default function DashboardPage() {
             }}
             sx={{ minWidth: 240 }}
           />
+          <FormControl size="small" sx={{ minWidth: 140 }}>
+            <InputLabel id="group-label">Group by</InputLabel>
+            <Select
+              labelId="group-label"
+              label="Group by"
+              value={groupMode}
+              onChange={(e) => setGroupMode(e.target.value as GroupMode)}
+            >
+              <MenuItem value="sku">SKU</MenuItem>
+              <MenuItem value="store">Store</MenuItem>
+              <MenuItem value="product">Product</MenuItem>
+            </Select>
+          </FormControl>
           <FormControl size="small" sx={{ minWidth: 160 }}>
             <InputLabel id="range-label">Range</InputLabel>
             <Select
@@ -382,7 +458,7 @@ export default function DashboardPage() {
                   direction={sortKey === "product" ? sortDir : "asc"}
                   onClick={() => handleSort("product", false)}
                 >
-                  Product
+                  {firstColLabel}
                 </TableSortLabel>
               </TableCell>
               <TableCell sx={{ ...skuCol, zIndex: 3, fontWeight: 700 }}>
@@ -391,7 +467,7 @@ export default function DashboardPage() {
                   direction={sortKey === "sku" ? sortDir : "asc"}
                   onClick={() => handleSort("sku", false)}
                 >
-                  SKU
+                  {secondColLabel}
                 </TableSortLabel>
               </TableCell>
               {weekCols.map((w) => (
@@ -441,57 +517,61 @@ export default function DashboardPage() {
               </TableRow>
             )}
 
-            {pageRows.map((row) => {
-              const hasSku = !row.sku.startsWith("#");
-              const productName = row.productName || (hasSku ? row.sku : row.sku);
-              return (
-                <TableRow key={row.sku}>
-                  <TableCell sx={productCol}>
-                    <Stack direction="row" alignItems="center" spacing={1}>
+            {pageRows.map((row) => (
+              <TableRow key={row.key}>
+                <TableCell sx={productCol}>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    {groupMode !== "store" && (
                       <Avatar
                         variant="rounded"
-                        src={row.productImage || undefined}
-                        alt={productName}
+                        src={row.image || undefined}
+                        alt={row.label}
                         sx={{ width: 36, height: 36, bgcolor: "action.hover", flexShrink: 0 }}
                       >
                         <ImageIcon fontSize="small" sx={{ color: "text.disabled" }} />
                       </Avatar>
-                      <Tooltip title={productName} placement="right">
-                        <Typography
-                          variant="body2"
-                          fontWeight={600}
-                          sx={{
-                            maxWidth: PRODUCT_W - 64,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {productName}
-                        </Typography>
-                      </Tooltip>
-                    </Stack>
-                  </TableCell>
-                  <TableCell sx={skuCol}>
-                    {hasSku ? (
+                    )}
+                    <Tooltip title={row.label} placement="right">
+                      <Typography
+                        variant="body2"
+                        fontWeight={600}
+                        sx={{
+                          maxWidth: PRODUCT_W - 64,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {row.label}
+                      </Typography>
+                    </Tooltip>
+                  </Stack>
+                </TableCell>
+                <TableCell sx={skuCol}>
+                  {groupMode === "sku" ? (
+                    row.sub ? (
                       <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-                        {row.sku}
+                        {row.sub}
                       </Typography>
                     ) : (
                       <Typography variant="caption" color="text.secondary">
                         no SKU
                       </Typography>
-                    )}
+                    )
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      {row.sub}
+                    </Typography>
+                  )}
+                </TableCell>
+                {weekCols.map((w) => (
+                  <TableCell key={w.weekStart} align="right">
+                    {cell(row.units[w.weekStart])}
                   </TableCell>
-                  {weekCols.map((w) => (
-                    <TableCell key={w.weekStart} align="right">
-                      {cell(row.units[w.weekStart])}
-                    </TableCell>
-                  ))}
-                  <TableCell align="right">{cell(row.total, true)}</TableCell>
-                </TableRow>
-              );
-            })}
+                ))}
+                <TableCell align="right">{cell(row.total, true)}</TableCell>
+              </TableRow>
+            ))}
 
             {!isLoading && rows.length > 0 && (
               <TableRow>
