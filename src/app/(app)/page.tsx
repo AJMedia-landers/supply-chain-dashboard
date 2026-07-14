@@ -60,7 +60,7 @@ export default function DashboardPage() {
   const queryClient = useQueryClient();
   const canSync = user?.email === SYNC_EMAIL;
 
-  const [weeks, setWeeks] = useState(12);
+  const [weeks, setWeeks] = useState(8);
 
   // Manual sync (restricted to SYNC_EMAIL) — pick an explicit date range.
   const [syncFrom, setSyncFrom] = useState(ymdDaysAgo(2));
@@ -142,7 +142,7 @@ export default function DashboardPage() {
 
   // Pagination (client-side over the filtered/sorted rows).
   const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(25);
+  const [rowsPerPage, setRowsPerPage] = useState(500);
 
   // Reset to the first page whenever the result set changes.
   useEffect(() => {
@@ -532,7 +532,7 @@ export default function DashboardPage() {
           setRowsPerPage(parseInt(e.target.value, 10));
           setPage(0);
         }}
-        rowsPerPageOptions={[10, 25, 50, 100]}
+        rowsPerPageOptions={[25, 50, 100, 500]}
       />
 
       <Snackbar
