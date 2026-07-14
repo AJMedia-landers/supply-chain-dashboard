@@ -15,11 +15,11 @@ export interface StoresResponse {
 
 export const getStores = () => api.get<StoresResponse>("/store-management");
 
-export const saveStore = (store_name: string, campaign_id: number) =>
-  api.post<{ success: boolean; message: string; store: StoreCampaign }>(
-    "/store-management",
-    { store_name, campaign_id }
-  );
+export const saveStore = (store_name: string, campaign_ids: number[]) =>
+  api.post<{ success: boolean; message: string }>("/store-management", {
+    store_name,
+    campaign_ids,
+  });
 
 export const deleteStore = (id: number) =>
   api.delete<{ success: boolean }>(`/store-management/${id}`);

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Box,
   Typography,
@@ -12,19 +12,26 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  IconButton,
+  Chip,
   CircularProgress,
   Alert,
   Snackbar,
-  Tooltip,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
-import { getStores, saveStore, deleteStore } from "@/lib/store.api";
+import { getStores, saveStore, deleteStore, type StoreCampaign } from "@/lib/store.api";
 
 const ALLOWED_EMAIL = "ivan.plametiuk@ajmedia.io";
+
+// Parse a free-text list of campaign ids ("111, 222 333") into unique positives.
+function parseIds(input: string): number[] {
+  const nums = input
+    .split(/[\s,]+/)
+    .map((x) => Number(x.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  return [...new Set(nums)];
+}
 
 export default function StoreManagementPage() {
   const { user } = useAuth();
@@ -32,7 +39,7 @@ export default function StoreManagementPage() {
   const allowed = user?.email === ALLOWED_EMAIL;
 
   const [storeName, setStoreName] = useState("");
-  const [campaignId, setCampaignId] = useState("");
+  const [campaignIds, setCampaignIds] = useState("");
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -55,11 +62,11 @@ export default function StoreManagementPage() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: () => saveStore(storeName.trim(), Number(campaignId)),
+    mutationFn: () => saveStore(storeName.trim(), parseIds(campaignIds)),
     onSuccess: (res) => {
       notify(res.data.message || "Saved", "success");
       setStoreName("");
-      setCampaignId("");
+      setCampaignIds("");
       queryClient.invalidateQueries({ queryKey: ["store-campaigns"] });
     },
     onError: (err) => notify(errMessage(err, "Failed to save"), "error"),
@@ -68,11 +75,27 @@ export default function StoreManagementPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => deleteStore(id),
     onSuccess: () => {
-      notify("Deleted", "success");
+      notify("Removed", "success");
       queryClient.invalidateQueries({ queryKey: ["store-campaigns"] });
     },
-    onError: (err) => notify(errMessage(err, "Failed to delete"), "error"),
+    onError: (err) => notify(errMessage(err, "Failed to remove"), "error"),
   });
+
+  // Group the flat rows by store name.
+  const grouped = useMemo(() => {
+    const m = new Map<string, StoreCampaign[]>();
+    for (const s of data?.stores ?? []) {
+      const arr = m.get(s.store_name) ?? [];
+      arr.push(s);
+      m.set(s.store_name, arr);
+    }
+    return [...m.entries()]
+      .map(([store_name, items]) => ({
+        store_name,
+        items: items.sort((a, b) => a.campaign_id - b.campaign_id),
+      }))
+      .sort((a, b) => a.store_name.localeCompare(b.store_name));
+  }, [data]);
 
   if (!allowed) {
     return (
@@ -82,12 +105,9 @@ export default function StoreManagementPage() {
     );
   }
 
-  const stores = data?.stores ?? [];
+  const parsed = parseIds(campaignIds);
   const canSave =
-    storeName.trim().length > 0 &&
-    /^\d+$/.test(campaignId.trim()) &&
-    Number(campaignId) > 0 &&
-    !saveMutation.isPending;
+    storeName.trim().length > 0 && parsed.length > 0 && !saveMutation.isPending;
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,7 +120,7 @@ export default function StoreManagementPage() {
         Store Management
       </Typography>
       <Typography variant="body2" color="text.secondary" mb={3}>
-        Map a CheckoutChamp campaign ID to a store name.
+        Map one or more CheckoutChamp campaign IDs to a store name.
       </Typography>
 
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
@@ -115,11 +135,16 @@ export default function StoreManagementPage() {
             />
             <TextField
               size="small"
-              label="Campaign ID"
-              value={campaignId}
-              onChange={(e) => setCampaignId(e.target.value.replace(/\D/g, ""))}
-              inputProps={{ inputMode: "numeric" }}
-              sx={{ minWidth: 180 }}
+              label="Campaign IDs"
+              placeholder="e.g. 111, 222, 333"
+              value={campaignIds}
+              onChange={(e) => setCampaignIds(e.target.value.replace(/[^\d,\s]/g, ""))}
+              helperText={
+                parsed.length > 0
+                  ? `${parsed.length} campaign${parsed.length === 1 ? "" : "s"}`
+                  : "Comma or space separated"
+              }
+              sx={{ minWidth: 280 }}
             />
             <Button
               type="submit"
@@ -132,6 +157,7 @@ export default function StoreManagementPage() {
                 )
               }
               disabled={!canSave}
+              sx={{ mt: 0.5 }}
             >
               {saveMutation.isPending ? "Saving..." : "Save"}
             </Button>
@@ -149,47 +175,45 @@ export default function StoreManagementPage() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 700 }}>Store name</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>Campaign ID</TableCell>
-              <TableCell align="right" sx={{ fontWeight: 700, width: 80 }}>
-                Actions
-              </TableCell>
+              <TableCell sx={{ fontWeight: 700, width: 240 }}>Store name</TableCell>
+              <TableCell sx={{ fontWeight: 700 }}>Campaign IDs</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
+                <TableCell colSpan={2} align="center" sx={{ py: 4 }}>
                   <CircularProgress size={24} />
                 </TableCell>
               </TableRow>
             )}
-            {!isLoading && stores.length === 0 && (
+            {!isLoading && grouped.length === 0 && (
               <TableRow>
-                <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
+                <TableCell colSpan={2} align="center" sx={{ py: 4 }}>
                   <Typography color="text.secondary">
                     No stores yet. Add one above.
                   </Typography>
                 </TableCell>
               </TableRow>
             )}
-            {stores.map((s) => (
-              <TableRow key={s.id} hover>
-                <TableCell>{s.store_name}</TableCell>
-                <TableCell sx={{ fontFamily: "monospace" }}>{s.campaign_id}</TableCell>
-                <TableCell align="right">
-                  <Tooltip title="Delete">
-                    <span>
-                      <IconButton
+            {grouped.map((g) => (
+              <TableRow key={g.store_name} hover>
+                <TableCell sx={{ fontWeight: 600, verticalAlign: "top" }}>
+                  {g.store_name}
+                </TableCell>
+                <TableCell>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    {g.items.map((item) => (
+                      <Chip
+                        key={item.id}
+                        label={item.campaign_id}
                         size="small"
-                        color="error"
-                        onClick={() => deleteMutation.mutate(s.id)}
+                        onDelete={() => deleteMutation.mutate(item.id)}
                         disabled={deleteMutation.isPending}
-                      >
-                        <DeleteOutlineIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
+                        sx={{ fontFamily: "monospace" }}
+                      />
+                    ))}
+                  </Stack>
                 </TableCell>
               </TableRow>
             ))}
