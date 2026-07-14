@@ -17,6 +17,7 @@ import {
 import { useAuth } from "@/context/AuthContext";
 
 const NAV_ITEMS = [{ label: "Dashboard", path: "/" }];
+const STORE_ADMIN_EMAIL = "ivan.plametiuk@ajmedia.io";
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -28,7 +29,10 @@ export default function Layout({ children }: { children: ReactNode }) {
     ? `${user.first_name[0]}${user.last_name[0]}`.toUpperCase()
     : "";
 
-  const navItems = NAV_ITEMS;
+  const navItems =
+    user?.email === STORE_ADMIN_EMAIL
+      ? [...NAV_ITEMS, { label: "Store Management", path: "/store-management" }]
+      : NAV_ITEMS;
   const currentTab = navItems.findIndex((item) => item.path === pathname);
 
   const handleLogout = () => {

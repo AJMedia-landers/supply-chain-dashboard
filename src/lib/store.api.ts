@@ -1,0 +1,25 @@
+import api from "./api";
+
+export interface StoreCampaign {
+  id: number;
+  store_name: string;
+  campaign_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StoresResponse {
+  success: boolean;
+  stores: StoreCampaign[];
+}
+
+export const getStores = () => api.get<StoresResponse>("/store-management");
+
+export const saveStore = (store_name: string, campaign_id: number) =>
+  api.post<{ success: boolean; message: string; store: StoreCampaign }>(
+    "/store-management",
+    { store_name, campaign_id }
+  );
+
+export const deleteStore = (id: number) =>
+  api.delete<{ success: boolean }>(`/store-management/${id}`);
