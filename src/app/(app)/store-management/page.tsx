@@ -12,15 +12,26 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  Chip,
+  IconButton,
+  Tooltip,
   CircularProgress,
   Alert,
   Snackbar,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
+import EditIcon from "@mui/icons-material/Edit";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import SaveIcon from "@mui/icons-material/Save";
+import CloseIcon from "@mui/icons-material/Close";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
-import { getStores, saveStore, deleteStore, type StoreCampaign } from "@/lib/store.api";
+import {
+  getStores,
+  saveStore,
+  updateStore,
+  deleteStore,
+  type StoreCampaign,
+} from "@/lib/store.api";
 
 const ALLOWED_EMAIL = "ivan.plametiuk@ajmedia.io";
 
@@ -38,8 +49,15 @@ export default function StoreManagementPage() {
   const queryClient = useQueryClient();
   const allowed = user?.email === ALLOWED_EMAIL;
 
+  // Add form
   const [storeName, setStoreName] = useState("");
   const [campaignIds, setCampaignIds] = useState("");
+
+  // Inline edit (keyed by the store's original name)
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editIds, setEditIds] = useState("");
+
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -55,6 +73,9 @@ export default function StoreManagementPage() {
     (err as Error)?.message ||
     fallback;
 
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["store-campaigns"] });
+
   const { data, isLoading, error } = useQuery({
     queryKey: ["store-campaigns"],
     queryFn: () => getStores().then((r) => r.data),
@@ -67,16 +88,27 @@ export default function StoreManagementPage() {
       notify(res.data.message || "Saved", "success");
       setStoreName("");
       setCampaignIds("");
-      queryClient.invalidateQueries({ queryKey: ["store-campaigns"] });
+      invalidate();
     },
     onError: (err) => notify(errMessage(err, "Failed to save"), "error"),
   });
 
+  const updateMutation = useMutation({
+    mutationFn: () =>
+      updateStore(editing as string, editName.trim(), parseIds(editIds)),
+    onSuccess: (res) => {
+      notify(res.data.message || "Updated", "success");
+      setEditing(null);
+      invalidate();
+    },
+    onError: (err) => notify(errMessage(err, "Failed to update"), "error"),
+  });
+
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => deleteStore(id),
+    mutationFn: (name: string) => deleteStore(name),
     onSuccess: () => {
-      notify("Removed", "success");
-      queryClient.invalidateQueries({ queryKey: ["store-campaigns"] });
+      notify("Store removed", "success");
+      invalidate();
     },
     onError: (err) => notify(errMessage(err, "Failed to remove"), "error"),
   });
@@ -92,7 +124,9 @@ export default function StoreManagementPage() {
     return [...m.entries()]
       .map(([store_name, items]) => ({
         store_name,
-        items: items.sort((a, b) => a.campaign_id - b.campaign_id),
+        ids: items
+          .map((i) => i.campaign_id)
+          .sort((a, b) => a - b),
       }))
       .sort((a, b) => a.store_name.localeCompare(b.store_name));
   }, [data]);
@@ -105,13 +139,24 @@ export default function StoreManagementPage() {
     );
   }
 
-  const parsed = parseIds(campaignIds);
-  const canSave =
-    storeName.trim().length > 0 && parsed.length > 0 && !saveMutation.isPending;
+  const parsedAdd = parseIds(campaignIds);
+  const canAdd =
+    storeName.trim().length > 0 && parsedAdd.length > 0 && !saveMutation.isPending;
 
-  const onSubmit = (e: React.FormEvent) => {
+  const canUpdate =
+    editName.trim().length > 0 &&
+    parseIds(editIds).length > 0 &&
+    !updateMutation.isPending;
+
+  const startEdit = (store_name: string, ids: number[]) => {
+    setEditing(store_name);
+    setEditName(store_name);
+    setEditIds(ids.join(", "));
+  };
+
+  const onAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (canSave) saveMutation.mutate();
+    if (canAdd) saveMutation.mutate();
   };
 
   return (
@@ -124,7 +169,7 @@ export default function StoreManagementPage() {
       </Typography>
 
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-        <Box component="form" onSubmit={onSubmit}>
+        <Box component="form" onSubmit={onAddSubmit}>
           <Stack direction="row" spacing={2} alignItems="flex-start" flexWrap="wrap" useFlexGap>
             <TextField
               size="small"
@@ -140,8 +185,8 @@ export default function StoreManagementPage() {
               value={campaignIds}
               onChange={(e) => setCampaignIds(e.target.value.replace(/[^\d,\s]/g, ""))}
               helperText={
-                parsed.length > 0
-                  ? `${parsed.length} campaign${parsed.length === 1 ? "" : "s"}`
+                parsedAdd.length > 0
+                  ? `${parsedAdd.length} campaign${parsedAdd.length === 1 ? "" : "s"}`
                   : "Comma or space separated"
               }
               sx={{ minWidth: 280 }}
@@ -156,10 +201,10 @@ export default function StoreManagementPage() {
                   <AddIcon />
                 )
               }
-              disabled={!canSave}
+              disabled={!canAdd}
               sx={{ mt: 0.5 }}
             >
-              {saveMutation.isPending ? "Saving..." : "Save"}
+              {saveMutation.isPending ? "Saving..." : "Add"}
             </Button>
           </Stack>
         </Box>
@@ -175,48 +220,106 @@ export default function StoreManagementPage() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 700, width: 240 }}>Store name</TableCell>
+              <TableCell sx={{ fontWeight: 700, width: 260 }}>Store name</TableCell>
               <TableCell sx={{ fontWeight: 700 }}>Campaign IDs</TableCell>
+              <TableCell align="right" sx={{ fontWeight: 700, width: 110 }}>
+                Actions
+              </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={2} align="center" sx={{ py: 4 }}>
+                <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
                   <CircularProgress size={24} />
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && grouped.length === 0 && (
               <TableRow>
-                <TableCell colSpan={2} align="center" sx={{ py: 4 }}>
+                <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
                   <Typography color="text.secondary">
                     No stores yet. Add one above.
                   </Typography>
                 </TableCell>
               </TableRow>
             )}
-            {grouped.map((g) => (
-              <TableRow key={g.store_name} hover>
-                <TableCell sx={{ fontWeight: 600, verticalAlign: "top" }}>
-                  {g.store_name}
-                </TableCell>
-                <TableCell>
-                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                    {g.items.map((item) => (
-                      <Chip
-                        key={item.id}
-                        label={item.campaign_id}
-                        size="small"
-                        onDelete={() => deleteMutation.mutate(item.id)}
-                        disabled={deleteMutation.isPending}
-                        sx={{ fontFamily: "monospace" }}
-                      />
-                    ))}
-                  </Stack>
-                </TableCell>
-              </TableRow>
-            ))}
+            {grouped.map((g) =>
+              editing === g.store_name ? (
+                <TableRow key={g.store_name}>
+                  <TableCell sx={{ verticalAlign: "top" }}>
+                    <TextField
+                      size="small"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      fullWidth
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <TextField
+                      size="small"
+                      value={editIds}
+                      onChange={(e) =>
+                        setEditIds(e.target.value.replace(/[^\d,\s]/g, ""))
+                      }
+                      placeholder="e.g. 111, 222, 333"
+                      fullWidth
+                    />
+                  </TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                    <Tooltip title="Save">
+                      <span>
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          onClick={() => updateMutation.mutate()}
+                          disabled={!canUpdate}
+                        >
+                          <SaveIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Tooltip title="Cancel">
+                      <IconButton size="small" onClick={() => setEditing(null)}>
+                        <CloseIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                <TableRow key={g.store_name} hover>
+                  <TableCell sx={{ fontWeight: 600 }}>{g.store_name}</TableCell>
+                  <TableCell sx={{ fontFamily: "monospace" }}>
+                    {g.ids.join(", ")}
+                  </TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                    <Tooltip title="Edit">
+                      <IconButton size="small" onClick={() => startEdit(g.store_name, g.ids)}>
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Delete store">
+                      <span>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => {
+                            if (
+                              window.confirm(`Delete store "${g.store_name}"?`)
+                            ) {
+                              deleteMutation.mutate(g.store_name);
+                            }
+                          }}
+                          disabled={deleteMutation.isPending}
+                        >
+                          <DeleteOutlineIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              )
+            )}
           </TableBody>
         </Table>
       </Paper>

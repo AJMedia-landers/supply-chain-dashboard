@@ -21,5 +21,18 @@ export const saveStore = (store_name: string, campaign_ids: number[]) =>
     campaign_ids,
   });
 
-export const deleteStore = (id: number) =>
-  api.delete<{ success: boolean }>(`/store-management/${id}`);
+export const updateStore = (
+  original_name: string,
+  store_name: string,
+  campaign_ids: number[]
+) =>
+  api.put<{ success: boolean; message: string }>("/store-management", {
+    original_name,
+    store_name,
+    campaign_ids,
+  });
+
+export const deleteStore = (store_name: string) =>
+  api.delete<{ success: boolean }>("/store-management", {
+    params: { store_name },
+  });
