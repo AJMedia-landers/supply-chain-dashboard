@@ -308,17 +308,34 @@ export default function DashboardPage() {
     );
   };
 
+  const [productWidth, setProductWidth] = useState(PRODUCT_W);
+  const onResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = productWidth;
+    const onMove = (ev: MouseEvent) =>
+      setProductWidth(Math.min(Math.max(startW + (ev.clientX - startX), 160), 640));
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+    };
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   const productCol = {
     position: "sticky" as const,
     left: 0,
     zIndex: 2,
     bgcolor: "background.paper",
-    minWidth: PRODUCT_W,
-    width: PRODUCT_W,
+    minWidth: productWidth,
+    width: productWidth,
   };
   const skuCol = {
     position: "sticky" as const,
-    left: PRODUCT_W,
+    left: productWidth,
     zIndex: 2,
     bgcolor: "background.paper",
     minWidth: SKU_W,
@@ -491,6 +508,19 @@ export default function DashboardPage() {
                 >
                   {firstColLabel}
                 </TableSortLabel>
+                <Box
+                  onMouseDown={onResizeStart}
+                  sx={{
+                    position: "absolute",
+                    top: 0,
+                    right: 0,
+                    height: "100%",
+                    width: "6px",
+                    cursor: "col-resize",
+                    userSelect: "none",
+                    "&:hover": { bgcolor: "primary.main", opacity: 0.4 },
+                  }}
+                />
               </TableCell>
               <TableCell sx={{ ...skuCol, zIndex: 3, fontWeight: 700 }}>
                 <TableSortLabel
@@ -585,7 +615,7 @@ export default function DashboardPage() {
                             variant="body2"
                             fontWeight={600}
                             sx={{
-                              maxWidth: PRODUCT_W - (hasChildren ? 96 : 64),
+                              maxWidth: productWidth - (hasChildren ? 96 : 64),
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
@@ -639,7 +669,7 @@ export default function DashboardPage() {
                                 variant="body2"
                                 color="text.secondary"
                                 sx={{
-                                  maxWidth: PRODUCT_W - 108,
+                                  maxWidth: productWidth - 108,
                                   overflow: "hidden",
                                   textOverflow: "ellipsis",
                                   whiteSpace: "nowrap",
@@ -682,7 +712,7 @@ export default function DashboardPage() {
                     left: 0,
                     zIndex: 2,
                     bgcolor: "background.paper",
-                    minWidth: PRODUCT_W + SKU_W,
+                    minWidth: productWidth + SKU_W,
                     borderRight: 1,
                     borderColor: "divider",
                     fontWeight: 700,
