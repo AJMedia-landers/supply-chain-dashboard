@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   Box,
   Typography,
@@ -24,11 +24,14 @@ import {
   InputAdornment,
   TablePagination,
   Snackbar,
+  IconButton,
 } from "@mui/material";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import ImageIcon from "@mui/icons-material/Image";
 import SearchIcon from "@mui/icons-material/Search";
 import SyncIcon from "@mui/icons-material/Sync";
+import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
+import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getSkuWeeklyUnits, syncSkuUnits } from "@/lib/analytics.api";
 import { useAuth } from "@/context/AuthContext";
@@ -64,6 +67,7 @@ type DisplayRow = {
   image: string | null;
   units: Record<string, number>;
   total: number;
+  children?: DisplayRow[]; // underlying SKUs when grouped by store/product
 };
 
 // Base product identity: strip a trailing variant token (e.g. "-1x", "-blue", "_x2").
@@ -127,7 +131,7 @@ export default function DashboardPage() {
 
     const groups = new Map<
       string,
-      { key: string; label: string; image: string | null; units: Record<string, number>; total: number; count: number }
+      { key: string; label: string; image: string | null; units: Record<string, number>; total: number; children: DisplayRow[] }
     >();
     for (const r of skus) {
       const key = groupMode === "store" ? r.storeName || "Unmapped" : baseSku(r.sku);
@@ -136,22 +140,30 @@ export default function DashboardPage() {
       const image = groupMode === "store" ? null : r.productImage;
       let g = groups.get(key);
       if (!g) {
-        g = { key, label, image, units: {}, total: 0, count: 0 };
+        g = { key, label, image, units: {}, total: 0, children: [] };
         groups.set(key, g);
       }
       for (const [wk, v] of Object.entries(r.units)) g.units[wk] = (g.units[wk] || 0) + v;
       g.total += r.total;
-      g.count += 1;
+      g.children.push({
+        key: r.sku,
+        label: r.productName || r.sku,
+        sub: r.sku.startsWith("#") ? null : r.sku,
+        image: r.productImage,
+        units: r.units,
+        total: r.total,
+      });
       if (!g.image && image) g.image = image;
     }
     const unit = groupMode === "store" ? "SKUs" : "variants";
     return [...groups.values()].map((g) => ({
       key: g.key,
       label: g.label,
-      sub: `${g.count} ${unit}`,
+      sub: `${g.children.length} ${unit}`,
       image: g.image,
       units: g.units,
       total: g.total,
+      children: g.children.sort((a, b) => b.total - a.total),
     }));
   }, [skus, groupMode]);
 
@@ -162,7 +174,13 @@ export default function DashboardPage() {
       ? displayRows.filter(
           (r) =>
             r.label.toLowerCase().includes(q) ||
-            (r.sub ?? "").toLowerCase().includes(q)
+            (r.sub ?? "").toLowerCase().includes(q) ||
+            (r.children?.some(
+              (c) =>
+                c.label.toLowerCase().includes(q) ||
+                (c.sub ?? "").toLowerCase().includes(q)
+            ) ??
+              false)
         )
       : displayRows;
 
@@ -202,6 +220,19 @@ export default function DashboardPage() {
   const firstColLabel = groupMode === "store" ? "Store" : "Product";
   const secondColLabel =
     groupMode === "sku" ? "SKU" : groupMode === "store" ? "SKUs" : "Variants";
+
+  // Expand/collapse of grouped rows to reveal their underlying SKUs.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  useEffect(() => {
+    setExpanded(new Set());
+  }, [groupMode]);
 
   // Pagination (client-side over the filtered/sorted rows).
   const [page, setPage] = useState(0);
@@ -517,61 +548,130 @@ export default function DashboardPage() {
               </TableRow>
             )}
 
-            {pageRows.map((row) => (
-              <TableRow key={row.key}>
-                <TableCell sx={productCol}>
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    {groupMode !== "store" && (
-                      <Avatar
-                        variant="rounded"
-                        src={row.image || undefined}
-                        alt={row.label}
-                        sx={{ width: 36, height: 36, bgcolor: "action.hover", flexShrink: 0 }}
-                      >
-                        <ImageIcon fontSize="small" sx={{ color: "text.disabled" }} />
-                      </Avatar>
-                    )}
-                    <Tooltip title={row.label} placement="right">
-                      <Typography
-                        variant="body2"
-                        fontWeight={600}
-                        sx={{
-                          maxWidth: PRODUCT_W - 64,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {row.label}
-                      </Typography>
-                    </Tooltip>
-                  </Stack>
-                </TableCell>
-                <TableCell sx={skuCol}>
-                  {groupMode === "sku" ? (
-                    row.sub ? (
-                      <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-                        {row.sub}
-                      </Typography>
-                    ) : (
-                      <Typography variant="caption" color="text.secondary">
-                        no SKU
-                      </Typography>
-                    )
-                  ) : (
-                    <Typography variant="caption" color="text.secondary">
-                      {row.sub}
-                    </Typography>
-                  )}
-                </TableCell>
-                {weekCols.map((w) => (
-                  <TableCell key={w.weekStart} align="right">
-                    {cell(row.units[w.weekStart])}
-                  </TableCell>
-                ))}
-                <TableCell align="right">{cell(row.total, true)}</TableCell>
-              </TableRow>
-            ))}
+            {pageRows.map((row) => {
+              const isOpen = expanded.has(row.key);
+              const hasChildren = !!row.children?.length;
+              return (
+                <Fragment key={row.key}>
+                  <TableRow>
+                    <TableCell sx={productCol}>
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        {hasChildren ? (
+                          <IconButton
+                            size="small"
+                            onClick={() => toggleExpand(row.key)}
+                            sx={{ p: 0.25, flexShrink: 0 }}
+                            aria-label={isOpen ? "Collapse" : "Expand"}
+                          >
+                            {isOpen ? (
+                              <KeyboardArrowDownIcon fontSize="small" />
+                            ) : (
+                              <KeyboardArrowRightIcon fontSize="small" />
+                            )}
+                          </IconButton>
+                        ) : null}
+                        {groupMode !== "store" && (
+                          <Avatar
+                            variant="rounded"
+                            src={row.image || undefined}
+                            alt={row.label}
+                            sx={{ width: 36, height: 36, bgcolor: "action.hover", flexShrink: 0 }}
+                          >
+                            <ImageIcon fontSize="small" sx={{ color: "text.disabled" }} />
+                          </Avatar>
+                        )}
+                        <Tooltip title={row.label} placement="right">
+                          <Typography
+                            variant="body2"
+                            fontWeight={600}
+                            sx={{
+                              maxWidth: PRODUCT_W - (hasChildren ? 96 : 64),
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {row.label}
+                          </Typography>
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
+                    <TableCell sx={skuCol}>
+                      {groupMode === "sku" ? (
+                        row.sub ? (
+                          <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                            {row.sub}
+                          </Typography>
+                        ) : (
+                          <Typography variant="caption" color="text.secondary">
+                            no SKU
+                          </Typography>
+                        )
+                      ) : (
+                        <Typography variant="caption" color="text.secondary">
+                          {row.sub}
+                        </Typography>
+                      )}
+                    </TableCell>
+                    {weekCols.map((w) => (
+                      <TableCell key={w.weekStart} align="right">
+                        {cell(row.units[w.weekStart])}
+                      </TableCell>
+                    ))}
+                    <TableCell align="right">{cell(row.total, true)}</TableCell>
+                  </TableRow>
+
+                  {isOpen &&
+                    row.children?.map((c) => (
+                      <TableRow key={`${row.key}::${c.key}`}>
+                        <TableCell sx={productCol}>
+                          <Stack direction="row" alignItems="center" spacing={1} sx={{ pl: 4 }}>
+                            <Avatar
+                              variant="rounded"
+                              src={c.image || undefined}
+                              alt={c.label}
+                              sx={{ width: 28, height: 28, bgcolor: "action.hover", flexShrink: 0 }}
+                            >
+                              <ImageIcon fontSize="small" sx={{ color: "text.disabled" }} />
+                            </Avatar>
+                            <Tooltip title={c.label} placement="right">
+                              <Typography
+                                variant="body2"
+                                color="text.secondary"
+                                sx={{
+                                  maxWidth: PRODUCT_W - 108,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {c.label}
+                              </Typography>
+                            </Tooltip>
+                          </Stack>
+                        </TableCell>
+                        <TableCell sx={skuCol}>
+                          {c.sub ? (
+                            <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                              {c.sub}
+                            </Typography>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">
+                              no SKU
+                            </Typography>
+                          )}
+                        </TableCell>
+                        {weekCols.map((w) => (
+                          <TableCell key={w.weekStart} align="right">
+                            {cell(c.units[w.weekStart])}
+                          </TableCell>
+                        ))}
+                        <TableCell align="right">{cell(c.total)}</TableCell>
+                      </TableRow>
+                    ))}
+                </Fragment>
+              );
+            })}
 
             {!isLoading && rows.length > 0 && (
               <TableRow>
